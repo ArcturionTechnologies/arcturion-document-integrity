@@ -1,0 +1,2 @@
+include README.md DEPENDENCIES.md PROVENANCE.md test_integrity.py
+recursive-include examples *.py
