@@ -1,20 +1,28 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "arcturion-document-integrity-candidate"
+name = "arcturion-document-integrity"
 version = "0.1.0"
-description = "Compare saved PDF form values with a field map and plan"
+description = "Check saved PDF form values against a plan and audit local document workflows"
+readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["pypdf>=3"]
+license = "MIT"
+license-files = ["LICENSE", "DEPENDENCIES.md"]
+dependencies = ["pypdf==6.10.0"]
 
 [project.optional-dependencies]
-examples = ["PyMuPDF>=1.24"]
+examples = ["PyMuPDF==1.27.2.2"]
+test = ["PyMuPDF==1.27.2.2"]
 
 [project.scripts]
 document-integrity = "verify_form_fill:main"
 docintegrity-stop = "stop_gate:main"
+
+[project.urls]
+Source = "https://github.com/ArcturionTechnologies/arcturion-document-integrity"
+Issues = "https://github.com/ArcturionTechnologies/arcturion-document-integrity/issues"
 
 [tool.setuptools]
 py-modules = ["verify_form_fill", "stop_gate"]

@@ -1,2 +1,3 @@
-include README.md DEPENDENCIES.md PROVENANCE.md test_integrity.py
+include README.md LICENSE DEPENDENCIES.md PROVENANCE.md CONTRIBUTING.md test_integrity.py
 recursive-include examples *.py
+recursive-include docs *.md

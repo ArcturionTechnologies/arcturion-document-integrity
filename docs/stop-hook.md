@@ -1,0 +1,17 @@
+# Optional local stop hook
+
+`stop_gate.py` accepts explicit watch roots and a source root. It inspects recently modified names ending in `.filled.pdf`; a selected unreadable, non-AcroForm or unplanned file blocks rather than being silently ignored. A field map and fill plan are required beside each selected PDF as `fields.json` / `fill_plan.json`, or `<pdf-stem>.fields.json` / `<pdf-stem>.fill_plan.json`.
+
+```sh
+python3 stop_gate.py --root "$work_dir/example" --source-root "$work_dir/example" --since 0
+```
+
+The hook prints `{"decision":"block",...}` on an audit failure and nothing when selected checks pass; normal hook decisions exit 0. Missing command-line arguments are usage errors. An empty scan produces no block and does **not** prove that all documents were inspected. `--include` and `--exclude` take repeatable filename or root-relative glob patterns; `--prune` takes a repeatable directory-name glob. Hidden directories are skipped. `--host-stdin` optionally reads a session ID and transcript path from JSON on standard input; only metadata for a transcript inside an explicit watch root is inspected. Otherwise the default window starts four hours ago, or use `--since`.
+
+Optional `--audit-dir` writes individual audit JSON files, including field values and source names. Optional `--ledger` can write an immutable audit-summary event after selected checks; events contain `audit_failed`, not the final hook decision, and some failures occur before an event is written. Events do not include field values. Each is an existing private, user-owned directory separate from watched and source roots. Files are created exclusively and synced before being made visible. An explicit override requires a ledger; it bypasses checks and records an event. Override is rejected when filing policy is enabled. Protect both directories as sensitive. Concurrent writers, unusual filesystems, and power loss are not comprehensively certified.
+
+An optional `--lock-file` names a private, single-link file named `.docintegrity-active` in a user-owned directory separate from watched and source roots. Its JSON `pdf` value is an absolute path, or a path relative to the lock. The hook rechecks that document even when it is old. It never deletes the lock by default; `--clear-lock-on-pass` requires both audit and ledger directories, and removes it only after checks and output writes succeed and the lock contents and metadata still match. These checks are not a claim of race-free behavior under concurrent filesystem changes.
+
+Each hook audit reads a byte snapshot and records its SHA-256; it rechecks selected files for changes before filing checks and before clearing a lock. This is a change detector, not a guarantee against concurrent filesystem races. With `--require-filing`, the hook also requires `--filing-receipt PATH`: a JSON object with a `receipts` list, each containing the selected PDF's `sha256` and `status: "filed"`. A missing or mismatched entry blocks. **This is caller-supplied evidence matching, not authentication, proof of filing, or an ATLAS integration.** No receipt or empty candidate selection is treated as evidence. Test host behavior before installing a hook; nothing here installs or activates one.
+
+The hook deliberately omits the original environment's private paths and live filing integration. Its roots, time window, filters and naming convention limit what it sees. It is not a universal enforcement or discovery guarantee. See [provenance](../PROVENANCE.md) for the adaptations.

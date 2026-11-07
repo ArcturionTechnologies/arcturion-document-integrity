@@ -1,5 +1,14 @@
 # Dependency notices
 
-The PDF reader uses the separately installed [pypdf](https://github.com/py-pdf/pypdf/blob/main/LICENSE), distributed under BSD-3-Clause. The invented PDF generator and tests additionally use separately installed [PyMuPDF](https://pymupdf.readthedocs.io/en/latest/about.html), available under AGPL or commercial terms. Neither library is bundled. Review the terms of the actual versions and any redistributed binary dependencies. Python's [license](https://docs.python.org/3/license.html) applies to the separately installed interpreter.
+Original Arcturion project material uses the MIT terms in LICENSE. Those terms do not relicense separately installed libraries, the interpreter, or their bundled dependencies. No library or model is bundled in this source tree.
 
-The project source itself has no publication license in this private candidate; any proposed terms require review separately from dependency licenses.
+| Component | Use | Separate terms |
+| --- | --- | --- |
+| pypdf 6.10.0 | Runtime PDF AcroForm reading | [BSD-3-Clause](https://github.com/py-pdf/pypdf/blob/6.10.0/LICENSE) |
+| PyMuPDF 1.27.2.2 | Optional invented fixture generator and tests | [AGPL or commercial](https://pypi.org/project/pymupdf/1.27.2.2/); [upstream explanation](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright) |
+| Python | Separately installed interpreter | [Python license](https://docs.python.org/3/license.html) |
+| setuptools | Source build tooling | Its own installed distribution license; not a runtime dependency |
+
+The base installation needs pypdf only. Installing the examples or test extra adds PyMuPDF. Check the actual library distribution and the terms relevant to your use or redistribution; the project's MIT text does not replace them.
+
+Dependencies are pinned to the versions used in the release checks. Updates should rerun the saved-value, malformed-input, protected-output and hook byte-identity cases before changing the pins.

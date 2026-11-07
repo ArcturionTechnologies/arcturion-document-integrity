@@ -1,0 +1,35 @@
+name: Synthetic checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install project and invented-fixture dependencies
+        run: python -m pip install '.[test]'
+      - name: Run synthetic regressions
+        run: python -m unittest -v test_integrity
+      - name: Check installed commands
+        run: |
+          document-integrity --help
+          docintegrity-stop --help
+      - name: Exercise an invented saved form
+        shell: bash
+        run: |
+          work_dir=$(mktemp -d)
+          python examples/create_fixture.py "$work_dir/example"
+          document-integrity --pdf "$work_dir/example/example.filled.pdf" --fields "$work_dir/example/fields.json" --plan "$work_dir/example/fill_plan.json" --source-root "$work_dir/example" --json
+          docintegrity-stop --root "$work_dir/example" --source-root "$work_dir/example" --since 0
