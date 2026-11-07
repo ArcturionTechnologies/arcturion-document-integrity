@@ -245,6 +245,33 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue())['decision'], 'block')
         self.assertTrue(lock.exists()); self.assertEqual(target.read_bytes(), b'keep')
 
+    def test_changed_pdf_cannot_borrow_an_earlier_audit(self):
+        lock=self.out/'.docintegrity-active'; lock.write_text(json.dumps({'pdf':str(self.pdf)})); lock.chmod(0o600)
+        changed = b'invented different bytes'
+        receipt=self.root/'receipt.json'; receipt.write_text(json.dumps({'receipts':[{'sha256':hashlib.sha256(changed).hexdigest(), 'status':'filed'}]}))
+        original_audit = g.audit_candidate
+        def replace_after_audit(pdf, root):
+            result = original_audit(pdf, root)
+            self.assertEqual(result['pdf_sha256'], hashlib.sha256(self.pdf.read_bytes()).hexdigest())
+            self.pdf.write_bytes(changed)
+            return result
+        output=io.StringIO()
+        with mock.patch('stop_gate.audit_candidate', side_effect=replace_after_audit), contextlib.redirect_stdout(output):
+            g.main(['--root',str(self.root),'--source-root',str(self.root),'--since','0','--lock-file',str(lock),'--clear-lock-on-pass','--audit-dir',str(self.out),'--ledger',str(self.out),'--require-filing','--filing-receipt',str(receipt)])
+        self.assertEqual(json.loads(output.getvalue())['decision'], 'block')
+        self.assertTrue(lock.exists())
+
+    def test_pdf_changed_after_report_does_not_clear_lock(self):
+        lock=self.out/'.docintegrity-active'; lock.write_text(json.dumps({'pdf':str(self.pdf)})); lock.chmod(0o600)
+        original_reports=g.write_reports
+        def mutate_after_report(directory, protected, results):
+            original_reports(directory, protected, results)
+            self.pdf.write_bytes(b'changed after audit')
+        output=io.StringIO()
+        with mock.patch('stop_gate.write_reports', side_effect=mutate_after_report), contextlib.redirect_stdout(output):
+            g.main(['--root',str(self.root),'--source-root',str(self.root),'--since','0','--lock-file',str(lock),'--clear-lock-on-pass','--audit-dir',str(self.out),'--ledger',str(self.out)])
+        self.assertEqual(json.loads(output.getvalue())['decision'], 'block'); self.assertTrue(lock.exists())
+
     def test_gate_decision(self):
         self.assertFalse(g.decide_evidence([])['block'])
         self.assertTrue(g.decide_evidence([], anomaly='bad')['block'])

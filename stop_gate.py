@@ -60,7 +60,12 @@ def audit_candidate(pdf, source_root):
     field_map, plan = find_sidecar(pdf, 'fields.json'), find_sidecar(pdf, 'fill_plan.json')
     if not field_map or not plan:
         return {'overall': 'FAIL', 'violations': [{'field': '(document)', 'verdict': 'MISSING_SIDECAR', 'detail': 'An explicit field map and plan are required'}]}
-    return verifier.verify_file(pdf, field_map, plan, source_root)
+    # Audit an immutable byte snapshot and carry its identity into evidence.
+    snapshot = pdf.read_bytes()
+    result = verifier.verify_file(io.BytesIO(snapshot), field_map, plan, source_root)
+    result['pdf'] = str(pdf)
+    result['pdf_sha256'] = hashlib.sha256(snapshot).hexdigest()
+    return result
 
 
 def decide_evidence(results, *, anomaly=None, override=False):
@@ -139,10 +144,20 @@ def check_filing_receipts(path, results):
     if not results:
         raise ValueError('Filing policy requires at least one selected document')
     for result in results:
-        digest = hashlib.sha256(Path(result['path']).read_bytes()).hexdigest()
+        digest = result['audit'].get('pdf_sha256')
+        if not digest:
+            raise ValueError('Audited PDF digest is unavailable')
         matches = [r for r in data['receipts'] if isinstance(r, dict) and r.get('sha256') == digest]
         if len(matches) != 1 or matches[0].get('status') != 'filed':
             raise ValueError('Filing evidence missing, duplicated, or mismatched')
+
+
+def require_unchanged(results):
+    """Reject a changed path after auditing its immutable byte snapshot."""
+    for result in results:
+        digest = result['audit'].get('pdf_sha256')
+        if digest and hashlib.sha256(Path(result['path']).read_bytes()).hexdigest() != digest:
+            raise ValueError('Selected PDF changed after audit')
 
 
 def host_context(roots):
@@ -241,6 +256,7 @@ def main(argv=None):
                     audit = {'overall': 'ERROR', 'violations': [{'field': '(document)', 'verdict': 'READ_ERROR', 'detail': str(exc)}]}
                 results.append({'path': str(pdf), 'audit': audit})
             result = decide_evidence(results)
+            require_unchanged(results)
             if args.require_filing:
                 if not args.filing_receipt:
                     raise ValueError('Filing policy requires an explicit receipt')
@@ -250,6 +266,7 @@ def main(argv=None):
             if args.ledger:
                 append_event(args.ledger, {'event': 'audit', 'time': time.time(), 'session_id': session_id, 'candidates': len(candidates), 'blocked': result['block']}, protected)
             if args.clear_lock_on_pass and locked is not None and not result['block']:
+                require_unchanged(results)
                 current = lock_path.stat(follow_symlinks=False)
                 if (lock_path.is_symlink() or current.st_nlink != 1 or
                         (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns) !=
