@@ -180,6 +180,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual((len(events), len(reports)), (2, 2))
         event = json.loads(events[0].read_text())
         self.assertNotIn('Example', json.dumps(event)); self.assertNotIn('reference.txt', json.dumps(event))
+        self.assertEqual(event['event'], 'audit_summary'); self.assertFalse(event['audit_failed']); self.assertNotIn('blocked', event)
         self.assertEqual(json.loads(reports[0].read_text())['audit']['overall'], 'PASS')
     def test_concurrent_history_creates_distinct_records(self):
         cmd = [sys.executable, '-B', str(Path(g.__file__)), '--root', str(self.root), '--source-root', str(self.root), '--since', '0', '--ledger', str(self.out)]

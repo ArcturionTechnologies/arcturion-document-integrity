@@ -264,7 +264,7 @@ def main(argv=None):
             if args.audit_dir:
                 write_reports(args.audit_dir, protected, results)
             if args.ledger:
-                append_event(args.ledger, {'event': 'audit', 'time': time.time(), 'session_id': session_id, 'candidates': len(candidates), 'blocked': result['block']}, protected)
+                append_event(args.ledger, {'event': 'audit_summary', 'time': time.time(), 'session_id': session_id, 'candidates': len(candidates), 'audit_failed': result['block']}, protected)
             if args.clear_lock_on_pass and locked is not None and not result['block']:
                 require_unchanged(results)
                 current = lock_path.stat(follow_symlinks=False)
