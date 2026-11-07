@@ -1,4 +1,8 @@
 import json
+import hashlib
+import io
+import contextlib
+from unittest import mock
 import os
 import subprocess
 import sys
@@ -55,6 +59,8 @@ class EndToEndTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name); self.pdf = self.root / 'example.filled.pdf'
+        self.outtemp = tempfile.TemporaryDirectory(); self.addCleanup(self.outtemp.cleanup)
+        self.out = Path(self.outtemp.name)
         doc = fitz.open(); page = doc.new_page(); widget = fitz.Widget()
         widget.field_name = 'name'; widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
         widget.rect = fitz.Rect(40, 40, 250, 70); widget.field_value = 'Example'; page.add_widget(widget)
@@ -91,8 +97,8 @@ class EndToEndTests(unittest.TestCase):
         run = subprocess.run(cmd, capture_output=True, text=True)
         self.assertEqual(json.loads(run.stdout)['decision'], 'block')
     def test_gate_rechecks_explicit_lock_even_if_old(self):
-        lock = self.root / 'active.json'
-        lock.write_text(json.dumps({'pdf': self.pdf.name}))
+        lock = self.out / '.docintegrity-active'
+        lock.write_text(json.dumps({'pdf': str(self.pdf)})); lock.chmod(0o600)
         cmd = [sys.executable, '-B', str(Path(g.__file__)), '--root', str(self.root), '--source-root', str(self.root), '--since', '9999999999', '--lock-file', str(lock)]
         run = subprocess.run(cmd, capture_output=True, text=True)
         self.assertEqual(run.stdout, '')
@@ -101,7 +107,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(json.loads(run.stdout)['decision'], 'block')
         self.assertTrue(lock.exists())
     def test_gate_malformed_lock_fails_closed(self):
-        lock = self.root / 'active.json'; lock.write_text('{}')
+        lock = self.out / '.docintegrity-active'; lock.write_text('{}'); lock.chmod(0o600)
         cmd = [sys.executable, '-B', str(Path(g.__file__)), '--root', str(self.root), '--source-root', str(self.root), '--lock-file', str(lock)]
         self.assertEqual(json.loads(subprocess.run(cmd, capture_output=True, text=True).stdout)['decision'], 'block')
     def test_gate_override_requires_ledger(self):
@@ -148,6 +154,96 @@ class EndToEndTests(unittest.TestCase):
     def test_source_symlinks_are_rejected(self):
         (self.root/'alias').symlink_to(self.root/'reference.txt')
         self.assertFalse(v.source_checker(self.root)('alias'))
+
+    def gate(self, *extra, stdin=None):
+        cmd = [sys.executable, '-B', str(Path(g.__file__)), '--root', str(self.root), '--source-root', str(self.root), '--since', '0', *extra]
+        return subprocess.run(cmd, input=stdin, capture_output=True, text=True)
+    def test_configurable_include_exclude_and_prune(self):
+        (self.root/'other.pdf').write_bytes(b'invented')
+        (self.root/'ignore.pdf').write_bytes(b'invented')
+        sub = self.root/'archive'; sub.mkdir(); (sub/'older.pdf').write_bytes(b'invented')
+        selected = g.collect_candidates([self.root], 0, ['*.pdf'], ['ignore.pdf'], ['archive'])
+        self.assertEqual({p.name for p in selected}, {'example.filled.pdf', 'other.pdf'})
+    def test_host_payload_is_explicit_and_bounded(self):
+        transcript = self.root/'transcript.fixture'; transcript.write_text('invented')
+        run = self.gate('--host-stdin', '--ledger', str(self.out), stdin=json.dumps({'session_id':'session-example', 'transcript_path':str(transcript)}))
+        self.assertEqual(run.stdout, '')
+        events = list(self.out.glob('event-*.json')); self.assertEqual(len(events), 1)
+        self.assertEqual(json.loads(events[0].read_text())['session_id'], 'session-example')
+        run = self.gate('--host-stdin', stdin='{"session_id": 3}')
+        self.assertEqual(json.loads(run.stdout)['decision'], 'block')
+        run = self.gate('--host-stdin', stdin=json.dumps({'transcript_path':str(self.out/'missing')}))
+        self.assertEqual(json.loads(run.stdout)['decision'], 'block')
+    def test_report_and_event_history_are_append_safe(self):
+        for _ in range(2): self.assertEqual(self.gate('--audit-dir', str(self.out), '--ledger', str(self.out)).stdout, '')
+        events, reports = list(self.out.glob('event-*.json')), list(self.out.glob('audit-*.json'))
+        self.assertEqual((len(events), len(reports)), (2, 2))
+        event = json.loads(events[0].read_text())
+        self.assertNotIn('Example', json.dumps(event)); self.assertNotIn('reference.txt', json.dumps(event))
+        self.assertEqual(json.loads(reports[0].read_text())['audit']['overall'], 'PASS')
+    def test_concurrent_history_creates_distinct_records(self):
+        cmd = [sys.executable, '-B', str(Path(g.__file__)), '--root', str(self.root), '--source-root', str(self.root), '--since', '0', '--ledger', str(self.out)]
+        children = [subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(4)]
+        for child in children:
+            stdout, stderr = child.communicate(); self.assertEqual(stdout, '', stderr)
+        self.assertEqual(len(list(self.out.glob('event-*.json'))), 4)
+    def test_output_roots_and_existing_aliases_are_never_overwritten(self):
+        original = self.pdf.read_bytes()
+        self.assertEqual(json.loads(self.gate('--audit-dir', str(self.root)).stdout)['decision'], 'block')
+        alias = self.root/'out-alias'; alias.symlink_to(self.out, target_is_directory=True)
+        self.assertEqual(json.loads(self.gate('--ledger', str(alias)).stdout)['decision'], 'block')
+        target = self.out/('event-' + 'a'*32 + '.json'); target.write_bytes(b'keep')
+        with mock.patch('stop_gate.uuid.uuid4') as ident:
+            ident.return_value.hex = 'a'*32
+            with self.assertRaises(FileExistsError): g.append_event(self.out, {'event':'test'}, [self.root])
+        self.assertEqual(target.read_bytes(), b'keep'); self.assertEqual(self.pdf.read_bytes(), original)
+    def test_filing_receipt_is_required_and_matches_bytes(self):
+        self.assertEqual(json.loads(self.gate('--require-filing').stdout)['decision'], 'block')
+        receipt = self.root/'receipt.json'; receipt.write_text(json.dumps({'receipts':[{'sha256':'0'*64, 'status':'filed'}]}))
+        self.assertEqual(json.loads(self.gate('--require-filing', '--filing-receipt', str(receipt)).stdout)['decision'], 'block')
+        digest = hashlib.sha256(self.pdf.read_bytes()).hexdigest()
+        receipt.write_text(json.dumps({'receipts':[{'sha256':digest, 'status':'filed'}, {'sha256':digest, 'status':'rejected'}]}))
+        self.assertEqual(json.loads(self.gate('--require-filing', '--filing-receipt', str(receipt)).stdout)['decision'], 'block')
+        receipt.write_text(json.dumps({'receipts':[{'sha256':digest, 'status':'filed'}]}))
+        self.assertEqual(self.gate('--require-filing', '--filing-receipt', str(receipt)).stdout, '')
+        self.assertEqual(json.loads(self.gate('--require-filing', '--override', '--ledger', str(self.out)).stdout)['decision'], 'block')
+    def test_lock_clears_only_after_audit_filing_and_outputs(self):
+        lock=self.out/'.docintegrity-active'; lock.write_text(json.dumps({'pdf':str(self.pdf)})); lock.chmod(0o600)
+        receipt=self.root/'receipt.json'; receipt.write_text(json.dumps({'receipts':[]}))
+        args=['--lock-file',str(lock),'--clear-lock-on-pass','--audit-dir',str(self.out),'--ledger',str(self.out),'--require-filing','--filing-receipt',str(receipt)]
+        self.assertEqual(json.loads(self.gate(*args).stdout)['decision'], 'block'); self.assertTrue(lock.exists())
+        receipt.write_text(json.dumps({'receipts':[{'sha256':hashlib.sha256(self.pdf.read_bytes()).hexdigest(), 'status':'filed'}]}))
+        self.assertEqual(self.gate(*args).stdout, ''); self.assertFalse(lock.exists())
+
+    def test_lock_cannot_alias_a_field_map_or_linked_input(self):
+        field_map = self.root/'fields.json'; original = field_map.read_bytes()
+        self.assertEqual(json.loads(self.gate('--lock-file', str(field_map), '--clear-lock-on-pass', '--audit-dir', str(self.out), '--ledger', str(self.out)).stdout)['decision'], 'block')
+        self.assertEqual(field_map.read_bytes(), original)
+        lock = self.out/'.docintegrity-active'; os.link(field_map, lock)
+        self.assertEqual(json.loads(self.gate('--lock-file', str(lock), '--clear-lock-on-pass', '--audit-dir', str(self.out), '--ledger', str(self.out)).stdout)['decision'], 'block')
+        self.assertTrue(lock.exists()); self.assertEqual(field_map.read_bytes(), original)
+    def test_lock_content_change_during_audit_is_not_cleared(self):
+        lock=self.out/'.docintegrity-active'; lock.write_text(json.dumps({'pdf':str(self.pdf)})); lock.chmod(0o600)
+        original_audit = g.audit_candidate
+        def mutate(pdf, root):
+            result = original_audit(pdf, root)
+            lock.write_text(json.dumps({'pdf':'another.pdf'}))
+            return result
+        output = io.StringIO()
+        with mock.patch('stop_gate.audit_candidate', side_effect=mutate), contextlib.redirect_stdout(output):
+            g.main(['--root',str(self.root),'--source-root',str(self.root),'--since','0','--lock-file',str(lock),'--clear-lock-on-pass','--audit-dir',str(self.out),'--ledger',str(self.out)])
+        self.assertEqual(json.loads(output.getvalue())['decision'], 'block')
+        self.assertTrue(lock.exists())
+
+    def test_lock_retained_if_report_output_fails(self):
+        lock=self.out/'.docintegrity-active'; lock.write_text(json.dumps({'pdf':str(self.pdf)})); lock.chmod(0o600)
+        target=self.out/('audit-' + 'b'*32 + '.json'); target.write_bytes(b'keep')
+        output=io.StringIO()
+        with mock.patch('stop_gate.uuid.uuid4') as ident, contextlib.redirect_stdout(output):
+            ident.return_value.hex = 'b'*32
+            g.main(['--root',str(self.root),'--source-root',str(self.root),'--since','0','--lock-file',str(lock),'--clear-lock-on-pass','--audit-dir',str(self.out),'--ledger',str(self.out)])
+        self.assertEqual(json.loads(output.getvalue())['decision'], 'block')
+        self.assertTrue(lock.exists()); self.assertEqual(target.read_bytes(), b'keep')
 
     def test_gate_decision(self):
         self.assertFalse(g.decide_evidence([])['block'])
