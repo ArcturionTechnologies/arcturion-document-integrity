@@ -4,7 +4,7 @@ Original Arcturion project material uses the MIT terms in LICENSE. Those terms d
 
 | Component | Use | Separate terms |
 | --- | --- | --- |
-| pypdf 6.10.0 | Runtime PDF AcroForm reading | [BSD-3-Clause](https://github.com/py-pdf/pypdf/blob/6.10.0/LICENSE) |
+| pypdf 6.21.4 | Runtime PDF AcroForm reading | [BSD-3-Clause](https://github.com/py-pdf/pypdf/blob/6.21.4/LICENSE) |
 | PyMuPDF 1.27.2.2 | Optional invented fixture generator and tests | [AGPL or commercial](https://pypi.org/project/pymupdf/1.27.2.2/); [upstream explanation](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright) |
 | Python | Separately installed interpreter | [Python license](https://docs.python.org/3/license.html) |
 | setuptools | Source build tooling | Its own installed distribution license; not a runtime dependency |

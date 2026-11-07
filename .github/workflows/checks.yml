@@ -12,10 +12,10 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install project and invented-fixture dependencies
@@ -32,4 +32,5 @@ jobs:
           work_dir=$(mktemp -d)
           python examples/create_fixture.py "$work_dir/example"
           document-integrity --pdf "$work_dir/example/example.filled.pdf" --fields "$work_dir/example/fields.json" --plan "$work_dir/example/fill_plan.json" --source-root "$work_dir/example" --json
-          docintegrity-stop --root "$work_dir/example" --source-root "$work_dir/example" --since 0
+          hook_output="$(docintegrity-stop --root "$work_dir/example" --source-root "$work_dir/example" --since 0)"
+          test -z "$hook_output"
